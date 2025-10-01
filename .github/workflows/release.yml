@@ -1,0 +1,168 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.id }}
+      release_upload_url: ${{ steps.create-release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        id: create-release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Pomodoro Focus ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            ## What's New in ${{ github.ref_name }}
+
+            ### Features
+            - List new features here
+
+            ### Bug Fixes
+            - List bug fixes here
+
+            ### Downloads
+            - **Windows**: Download the `.msi` or `.exe` installer
+            - **Linux**: Download the `.deb` package or `.AppImage`
+
+            See the assets below for downloads.
+
+  build-windows:
+    needs: create-release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build Tauri app
+        run: bun run tauri build
+
+      - name: Upload MSI to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
+          asset_path: ./src-tauri/target/release/bundle/msi/Pomodoro Focus_0.1.0_x64_en-US.msi
+          asset_name: Pomodoro-Focus-${{ github.ref_name }}-windows-x64.msi
+          asset_content_type: application/x-msi
+
+      - name: Upload NSIS installer to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
+          asset_path: ./src-tauri/target/release/bundle/nsis/Pomodoro Focus_0.1.0_x64-setup.exe
+          asset_name: Pomodoro-Focus-${{ github.ref_name }}-windows-x64-setup.exe
+          asset_content_type: application/vnd.microsoft.portable-executable
+        continue-on-error: true
+
+  build-linux:
+    needs: create-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build Tauri app
+        run: bun run tauri build
+
+      - name: Find DEB file
+        id: find-deb
+        run: |
+          DEB_FILE=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -n 1)
+          echo "deb_file=$DEB_FILE" >> $GITHUB_OUTPUT
+          echo "deb_name=$(basename $DEB_FILE)" >> $GITHUB_OUTPUT
+
+      - name: Upload DEB to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
+          asset_path: ${{ steps.find-deb.outputs.deb_file }}
+          asset_name: Pomodoro-Focus-${{ github.ref_name }}-linux-amd64.deb
+          asset_content_type: application/vnd.debian.binary-package
+
+      - name: Find AppImage file
+        id: find-appimage
+        run: |
+          APPIMAGE_FILE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -n 1)
+          echo "appimage_file=$APPIMAGE_FILE" >> $GITHUB_OUTPUT
+          echo "appimage_name=$(basename $APPIMAGE_FILE)" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Upload AppImage to Release
+        if: steps.find-appimage.outputs.appimage_file != ''
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
+          asset_path: ${{ steps.find-appimage.outputs.appimage_file }}
+          asset_name: Pomodoro-Focus-${{ github.ref_name }}-linux-x86_64.AppImage
+          asset_content_type: application/octet-stream
+        continue-on-error: true

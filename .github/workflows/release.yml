@@ -15,18 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create Release
+      - name: Get or Create Release
         id: create-release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Pomodoro Focus ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          body: |
-            ## What's New in ${{ github.ref_name }}
+        run: |
+          # Check if release exists
+          RELEASE_DATA=$(gh release view "${{ github.ref_name }}" --json id,uploadUrl 2>/dev/null || echo "")
+
+          if [ -n "$RELEASE_DATA" ]; then
+            # Release exists, get its data
+            echo "Release already exists, using existing release"
+            RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+            UPLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.uploadUrl')
+          else
+            # Create new release
+            echo "Creating new release"
+            gh release create "${{ github.ref_name }}" \
+              --title "Pomodoro Focus ${{ github.ref_name }}" \
+              --notes "## What's New in ${{ github.ref_name }}
 
             ### Features
             - List new features here
@@ -35,10 +40,20 @@ jobs:
             - List bug fixes here
 
             ### Downloads
-            - **Windows**: Download the `.msi` or `.exe` installer
-            - **Linux**: Download the `.deb` package or `.AppImage`
+            - **Windows**: Download the \`.msi\` or \`.exe\` installer
+            - **Linux**: Download the \`.deb\` package or \`.AppImage\`
 
-            See the assets below for downloads.
+            See the assets below for downloads."
+            
+            RELEASE_DATA=$(gh release view "${{ github.ref_name }}" --json id,uploadUrl)
+            RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+            UPLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.uploadUrl')
+          fi
+
+          echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
+          echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-windows:
     needs: create-release
@@ -72,25 +87,28 @@ jobs:
       - name: Build Tauri app
         run: bun run tauri build
 
-      - name: Upload MSI to Release
-        uses: actions/upload-release-asset@v1
+      - name: Find and Upload MSI to Release
+        run: |
+          MSI_FILE=$(find src-tauri/target/release/bundle/msi -name "*.msi" | head -n 1)
+          if [ -f "$MSI_FILE" ]; then
+            gh release upload "${{ github.ref_name }}" "$MSI_FILE" --clobber
+          else
+            echo "MSI file not found"
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
-          asset_path: ./src-tauri/target/release/bundle/msi/Pomodoro Focus_0.1.0_x64_en-US.msi
-          asset_name: Pomodoro-Focus-${{ github.ref_name }}-windows-x64.msi
-          asset_content_type: application/x-msi
 
-      - name: Upload NSIS installer to Release
-        uses: actions/upload-release-asset@v1
+      - name: Find and Upload NSIS installer to Release
+        run: |
+          NSIS_FILE=$(find src-tauri/target/release/bundle/nsis -name "*-setup.exe" | head -n 1)
+          if [ -f "$NSIS_FILE" ]; then
+            gh release upload "${{ github.ref_name }}" "$NSIS_FILE" --clobber
+          else
+            echo "NSIS installer not found, skipping"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
-          asset_path: ./src-tauri/target/release/bundle/nsis/Pomodoro Focus_0.1.0_x64-setup.exe
-          asset_name: Pomodoro-Focus-${{ github.ref_name }}-windows-x64-setup.exe
-          asset_content_type: application/vnd.microsoft.portable-executable
         continue-on-error: true
 
   build-linux:
@@ -130,39 +148,26 @@ jobs:
       - name: Build Tauri app
         run: bun run tauri build
 
-      - name: Find DEB file
-        id: find-deb
+      - name: Find and Upload DEB to Release
         run: |
           DEB_FILE=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -n 1)
-          echo "deb_file=$DEB_FILE" >> $GITHUB_OUTPUT
-          echo "deb_name=$(basename $DEB_FILE)" >> $GITHUB_OUTPUT
-
-      - name: Upload DEB to Release
-        uses: actions/upload-release-asset@v1
+          if [ -f "$DEB_FILE" ]; then
+            gh release upload "${{ github.ref_name }}" "$DEB_FILE" --clobber
+          else
+            echo "DEB file not found"
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
-          asset_path: ${{ steps.find-deb.outputs.deb_file }}
-          asset_name: Pomodoro-Focus-${{ github.ref_name }}-linux-amd64.deb
-          asset_content_type: application/vnd.debian.binary-package
 
-      - name: Find AppImage file
-        id: find-appimage
+      - name: Find and Upload AppImage to Release
         run: |
           APPIMAGE_FILE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -n 1)
-          echo "appimage_file=$APPIMAGE_FILE" >> $GITHUB_OUTPUT
-          echo "appimage_name=$(basename $APPIMAGE_FILE)" >> $GITHUB_OUTPUT
-        continue-on-error: true
-
-      - name: Upload AppImage to Release
-        if: steps.find-appimage.outputs.appimage_file != ''
-        uses: actions/upload-release-asset@v1
+          if [ -f "$APPIMAGE_FILE" ]; then
+            gh release upload "${{ github.ref_name }}" "$APPIMAGE_FILE" --clobber
+          else
+            echo "AppImage file not found, skipping"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.release_upload_url }}
-          asset_path: ${{ steps.find-appimage.outputs.appimage_file }}
-          asset_name: Pomodoro-Focus-${{ github.ref_name }}-linux-x86_64.AppImage
-          asset_content_type: application/octet-stream
         continue-on-error: true

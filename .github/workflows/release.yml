@@ -88,6 +88,7 @@ jobs:
         run: bun run tauri build
 
       - name: Find and Upload MSI to Release
+        shell: bash
         run: |
           MSI_FILE=$(find src-tauri/target/release/bundle/msi -name "*.msi" | head -n 1)
           if [ -f "$MSI_FILE" ]; then
@@ -100,6 +101,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Find and Upload NSIS installer to Release
+        shell: bash
         run: |
           NSIS_FILE=$(find src-tauri/target/release/bundle/nsis -name "*-setup.exe" | head -n 1)
           if [ -f "$NSIS_FILE" ]; then
